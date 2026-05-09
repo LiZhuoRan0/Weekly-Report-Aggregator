@@ -1,0 +1,14 @@
+# secrets / private config
+config.json
+.env
+
+# generated files
+logs/
+output/
+__pycache__/
+*.pyc
+
+# local data / private student info
+students.txt
+TargetEmail.txt
+WeeklyReportFile/
