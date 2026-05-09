@@ -25,11 +25,10 @@
 weekly_report_aggregator/
 ├── main.py                     # 程序入口
 ├── requirements.txt
-├── config.json.example         # 配置模板（含 IMAP/SMTP 凭据）
+├── config.example              # 配置模板（含 IMAP/SMTP 凭据）
 ├── README.md
-├── examples/
-│   ├── students.txt            # 学生名单示例
-│   └── TargetEmail.txt         # 收件人示例
+├── students.txt                # 学生名单示例
+├── TargetEmail.txt             # 收件人示例
 ├── src/
 │   ├── __init__.py
 │   ├── config.py               # 配置 / students.txt / TargetEmail.txt 加载
