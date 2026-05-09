@@ -71,16 +71,16 @@ cp examples/TargetEmail.txt TargetEmail.txt
     "imap": {
         "host": "imap.qq.com",
         "port": 993,
-        "user": "lizhuoran2000@qq.com",
+        "user": "xxx@qq.com",
         "password": "QQ邮箱授权码（不是登录密码）"
     },
     "smtp": {
         "host": "smtp.qq.com",
         "port": 465,
-        "user": "lizhuoran2000@qq.com",
+        "user": "xxx@qq.com",
         "password": "QQ邮箱授权码"
     },
-    "FilePath": "/Users/lizhuoran/Documents/weekly_reports",
+    "FilePath": "/Users/xxx/Documents/weekly_reports",
     "TargetTime": "2026_05_08_23_59",
     "lookback_days": 3,
     "max_attachment_size_mb": 20,
@@ -227,7 +227,7 @@ python main.py \
 对中文名 `李伟`（`li`/`zhuo`/`ran`），生成以下变体：
 
 ```
-姓在前： lizhuoran, li_zhuoran, li-zhuoran, li_zhuo_ran, li-zhuo-ran
+姓在前： xxx, li_zhuoran, li-zhuoran, li_zhuo_ran, li-zhuo-ran
 名在前： zhuoranli, zhuoran_li, zhuoran-li, zhuo_ran_li, zhuo-ran-li
 ```
 
