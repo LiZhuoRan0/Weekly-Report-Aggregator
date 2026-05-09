@@ -84,7 +84,7 @@ cp examples/TargetEmail.txt TargetEmail.txt
     "TargetTime": "2026_05_08_23_59",
     "lookback_days": 3,
     "max_attachment_size_mb": 20,
-    "sender_display_name": "李卓然"
+    "sender_display_name": "李伟"
 }
 ```
 
@@ -224,7 +224,7 @@ python main.py \
 
 ### 拼音变体生成
 
-对中文名 `李卓然`（`li`/`zhuo`/`ran`），生成以下变体：
+对中文名 `李伟`（`li`/`zhuo`/`ran`），生成以下变体：
 
 ```
 姓在前： lizhuoran, li_zhuoran, li-zhuoran, li_zhuo_ran, li-zhuo-ran
