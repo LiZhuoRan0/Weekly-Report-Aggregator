@@ -25,7 +25,7 @@
 weekly_report_aggregator/
 ├── main.py                     # 程序入口
 ├── requirements.txt
-├── config.example              # 配置模板（含 IMAP/SMTP 凭据）
+├── config.json                 # 配置模板（含 IMAP/SMTP 凭据）
 ├── README.md
 ├── students.txt                # 学生名单示例
 ├── TargetEmail.txt             # 收件人示例
@@ -55,13 +55,7 @@ pip install -r requirements.txt
 
 ### 2. 准备配置文件
 
-复制示例配置并填入你的信息：
-
-```bash
-cp config.json.example config.json
-cp examples/students.txt students.txt
-cp examples/TargetEmail.txt TargetEmail.txt
-```
+复制示例配置并填入你的信息
 
 #### `config.json` 字段说明
 
