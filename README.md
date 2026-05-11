@@ -25,11 +25,10 @@
 weekly_report_aggregator/
 ├── main.py                     # 程序入口
 ├── requirements.txt
-├── config.json.example         # 配置模板（含 IMAP/SMTP 凭据）
+├── config.json                 # 配置模板（含 IMAP/SMTP 凭据）
 ├── README.md
-├── examples/
-│   ├── students.txt            # 学生名单示例
-│   └── TargetEmail.txt         # 收件人示例
+├── students.txt                # 学生名单示例
+├── TargetEmail.txt             # 收件人示例
 ├── src/
 │   ├── __init__.py
 │   ├── config.py               # 配置 / students.txt / TargetEmail.txt 加载
@@ -56,13 +55,7 @@ pip install -r requirements.txt
 
 ### 2. 准备配置文件
 
-复制示例配置并填入你的信息：
-
-```bash
-cp config.json.example config.json
-cp examples/students.txt students.txt
-cp examples/TargetEmail.txt TargetEmail.txt
-```
+复制示例配置并填入你的信息
 
 #### `config.json` 字段说明
 
@@ -71,20 +64,20 @@ cp examples/TargetEmail.txt TargetEmail.txt
     "imap": {
         "host": "imap.qq.com",
         "port": 993,
-        "user": "lizhuoran2000@qq.com",
+        "user": "xxx@qq.com",
         "password": "QQ邮箱授权码（不是登录密码）"
     },
     "smtp": {
         "host": "smtp.qq.com",
         "port": 465,
-        "user": "lizhuoran2000@qq.com",
+        "user": "xxx@qq.com",
         "password": "QQ邮箱授权码"
     },
-    "FilePath": "/Users/lizhuoran/Documents/weekly_reports",
+    "FilePath": "/Users/xxx/Documents/weekly_reports",
     "TargetTime": "2026_05_08_23_59",
     "lookback_days": 3,
     "max_attachment_size_mb": 20,
-    "sender_display_name": "李卓然"
+    "sender_display_name": "李伟"
 }
 ```
 
@@ -228,10 +221,10 @@ python main.py \
 
 ### 拼音变体生成
 
-对中文名 `李卓然`（`li`/`zhuo`/`ran`），生成以下变体：
+对中文名 `李伟`（`li`/`zhuo`/`ran`），生成以下变体：
 
 ```
-姓在前： lizhuoran, li_zhuoran, li-zhuoran, li_zhuo_ran, li-zhuo-ran
+姓在前： xxx, li_zhuoran, li-zhuoran, li_zhuo_ran, li-zhuo-ran
 名在前： zhuoranli, zhuoran_li, zhuoran-li, zhuo_ran_li, zhuo-ran-li
 ```
 
