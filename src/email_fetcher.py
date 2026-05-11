@@ -16,6 +16,8 @@ import imaplib
 import logging
 import os
 import re
+import socket
+import time
 from datetime import datetime, timedelta
 from email.header import decode_header
 from email.utils import parseaddr, parsedate_to_datetime
@@ -25,6 +27,114 @@ from typing import List, Optional, Set
 from .matcher import PdfCandidate
 
 logger = logging.getLogger("wra")
+
+_IMAP_TIMEOUT_SECONDS = 60
+_FETCH_MAX_ATTEMPTS = 3
+_FETCH_RETRY_SLEEP_SECONDS = 2
+
+
+def _close_imap(M: Optional[imaplib.IMAP4_SSL]) -> None:
+    """Best-effort close/logout for an IMAP connection."""
+    if M is None:
+        return
+
+    try:
+        M.close()
+    except Exception:
+        pass
+
+    try:
+        M.logout()
+    except Exception:
+        pass
+
+
+def _connect_imap(
+    host: str,
+    port: int,
+    user: str,
+    password: str,
+) -> imaplib.IMAP4_SSL:
+    """Create a fresh IMAP connection and select INBOX."""
+    logger.info(f"Connecting to IMAP {host}:{port} as {user}")
+
+    M = imaplib.IMAP4_SSL(host, port)
+    M.login(user, password)
+
+    typ, _ = M.select("INBOX", readonly=True)
+    if typ != "OK":
+        _close_imap(M)
+        raise imaplib.IMAP4.error("Failed to select INBOX")
+
+    return M
+
+
+def _fetch_raw_message_with_retries(
+    M: Optional[imaplib.IMAP4_SSL],
+    host: str,
+    port: int,
+    user: str,
+    password: str,
+    msg_uid: bytes,
+    max_attempts: int = _FETCH_MAX_ATTEMPTS,
+) -> tuple[Optional[imaplib.IMAP4_SSL], Optional[bytes]]:
+    """Fetch one email with retries.
+
+    If the current IMAP connection times out or becomes unusable, close it,
+    reconnect, and retry this message. If this message still fails after all
+    retries, skip only this message and let later messages continue.
+    """
+    last_error: Optional[Exception] = None
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            if M is None:
+                M = _connect_imap(host, port, user, password)
+
+            typ, msg_data = M.uid("FETCH", msg_uid, "(RFC822)")
+            if typ != "OK" or not msg_data or not msg_data[0]:
+                logger.warning(
+                    f"Fetch message {msg_uid!r} returned no data "
+                    f"(attempt {attempt}/{max_attempts})"
+                )
+                return M, None
+
+            raw = msg_data[0][1]
+            if not isinstance(raw, (bytes, bytearray)):
+                logger.warning(
+                    f"Fetch message {msg_uid!r} returned non-bytes payload "
+                    f"(attempt {attempt}/{max_attempts})"
+                )
+                return M, None
+
+            return M, bytes(raw)
+
+        except (
+            socket.timeout,
+            TimeoutError,
+            OSError,
+            imaplib.IMAP4.abort,
+            imaplib.IMAP4.error,
+        ) as e:
+            last_error = e
+            logger.warning(
+                f"Failed to fetch message {msg_uid!r} "
+                f"(attempt {attempt}/{max_attempts}): {e}"
+            )
+
+            # Important: after timeout, this connection may be poisoned.
+            # Do not reuse it for the next message.
+            _close_imap(M)
+            M = None
+
+            if attempt < max_attempts:
+                time.sleep(_FETCH_RETRY_SLEEP_SECONDS)
+
+    logger.warning(
+        f"Skipped message {msg_uid!r} after {max_attempts} failed fetch attempt(s): "
+        f"{last_error}"
+    )
+    return M, None
 
 
 def _decode_str(s) -> str:
@@ -91,40 +201,40 @@ def fetch_email_pdf_attachments(
     M: Optional[imaplib.IMAP4_SSL] = None
 
     try:
-        logger.info(f"Connecting to IMAP {host}:{port} as {user}")
-        # 30s socket timeout to avoid long hangs on bad networks/credentials
-        import socket
-        socket.setdefaulttimeout(30)
-        M = imaplib.IMAP4_SSL(host, port)
-        M.login(user, password)
-        # QQ's selectable mailbox name for inbox is "INBOX". For 已发送 etc., names differ.
-        typ, _ = M.select("INBOX", readonly=True)
-        if typ != "OK":
-            logger.error("Failed to select INBOX")
-            return []
+        # Socket timeout to avoid long hangs on bad networks/credentials.
+        # A timed-out connection will be discarded and rebuilt per message fetch.
+        socket.setdefaulttimeout(_IMAP_TIMEOUT_SECONDS)
+
+        M = _connect_imap(host, port, user, password)
 
         # Build IMAP SINCE date (one day earlier to be safe)
         search_since = (since_dt - timedelta(days=1)).strftime("%d-%b-%Y")
         # IMAP SEARCH: SINCE returns messages with internal date >= the given date
-        typ, data = M.search(None, "SINCE", search_since)
+        typ, data = M.uid("SEARCH", None, "SINCE", search_since)
         if typ != "OK" or not data or not data[0]:
             logger.info(f"No messages found since {search_since}")
             return []
 
         msg_ids = data[0].split()
-        logger.info(f"IMAP returned {len(msg_ids)} message id(s) since {search_since}")
+        logger.info(f"IMAP returned {len(msg_ids)} message UID(s) since {search_since}")
 
         for msg_id in msg_ids:
+            M, raw = _fetch_raw_message_with_retries(
+                M=M,
+                host=host,
+                port=port,
+                user=user,
+                password=password,
+                msg_uid=msg_id,
+            )
+
+            if raw is None:
+                continue
+
             try:
-                typ, msg_data = M.fetch(msg_id, "(RFC822)")
-                if typ != "OK" or not msg_data or not msg_data[0]:
-                    continue
-                raw = msg_data[0][1]
-                if not isinstance(raw, (bytes, bytearray)):
-                    continue
                 msg = email.message_from_bytes(raw)
             except Exception as e:
-                logger.warning(f"Failed to fetch/parse message {msg_id}: {e}")
+                logger.warning(f"Failed to parse message {msg_id!r}: {e}")
                 continue
 
             # Filter by Date header against [since_dt, until_dt]
@@ -224,15 +334,7 @@ def fetch_email_pdf_attachments(
     except Exception as e:
         logger.error(f"Unexpected error during IMAP fetch: {e}")
     finally:
-        if M is not None:
-            try:
-                M.close()
-            except Exception:
-                pass
-            try:
-                M.logout()
-            except Exception:
-                pass
+        _close_imap(M)
 
     logger.info(f"Total PDFs saved from email: {len(candidates)}")
     return candidates

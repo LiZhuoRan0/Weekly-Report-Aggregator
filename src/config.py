@@ -8,8 +8,9 @@ from typing import List
 
 @dataclass
 class Student:
-    """A single student with Chinese name and one or more email addresses."""
+    """A single student with Chinese name, manually provided pinyin, and emails."""
     chinese_name: str
+    pinyin_aliases: List[str] = field(default_factory=list)
     emails: List[str] = field(default_factory=list)
 
 
@@ -59,8 +60,9 @@ def load_config(path: str = "config.json") -> Config:
     )
 
 
-# Splits on commas (中/英), semicolons (中/英), whitespace
-_DELIM_RE = re.compile(r"[\s,，;；]+")
+# Split fields on commas / semicolons only.
+# This preserves manually provided pinyin like "li wei".
+_FIELD_DELIM_RE = re.compile(r"[,，;；]+")
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
 
 _INLINE_COMMENT_RE = re.compile(
@@ -96,17 +98,39 @@ def load_students(path: str) -> List[Student]:
             if not line:
                 continue
 
-            tokens = [t for t in _DELIM_RE.split(line) if t]
-            if not tokens:
+            fields = [t.strip() for t in _FIELD_DELIM_RE.split(line) if t.strip()]
+            if not fields:
                 continue
-            # First token = Chinese name; rest = emails
-            name = tokens[0]
+
+            # First field = Chinese name
+            name = fields[0]
+
+            # Emails can appear anywhere in the line
             emails = [m.group(0).lower() for m in _EMAIL_RE.finditer(line)]
-            if not emails:
-                # Allow students without email (won't help for email matching)
-                # but still keep them in the ordering.
-                pass
-            students.append(Student(chinese_name=name, emails=emails))
+
+            # Pinyin aliases are non-email fields after the Chinese name.
+            # Example:
+            # 李wei，li wei，liwei@qq.com
+            # -> pinyin_aliases = ["li wei"]
+            pinyin_aliases = []
+            for field in fields[1:]:
+                field_without_emails = _EMAIL_RE.sub("", field).strip()
+                if field_without_emails and re.search(r"[A-Za-z]", field_without_emails):
+                    pinyin_aliases.append(field_without_emails.lower())
+
+            if not pinyin_aliases:
+                raise ValueError(
+                    f"Missing pinyin for student '{name}'. "
+                    "Expected format: 中文姓名，pinyin，email@example.com"
+                )
+
+            students.append(
+                Student(
+                    chinese_name=name,
+                    pinyin_aliases=pinyin_aliases,
+                    emails=emails,
+                )
+            )
     return students
 
 

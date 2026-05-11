@@ -11,4 +11,3 @@ __pycache__/
 # local data / private student info
 students.txt
 TargetEmail.txt
-WeeklyReportFile/

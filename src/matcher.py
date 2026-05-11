@@ -24,7 +24,7 @@ from typing import Dict, List, Optional, Tuple
 
 from .config import Student
 from .pdf_utils import extract_text_first_pages, is_valid_pdf
-from .pinyin_utils import get_pinyin_variants
+from .pinyin_utils import get_pinyin_alias_variants
 
 logger = logging.getLogger("wra")
 
@@ -121,10 +121,20 @@ def match_pdfs(
       - If both 'local' and 'email' PDFs exist for a student, prefer 'local'.
       - Within the same source, prefer the latest mtime.
     """
-    # Pre-compute pinyin variants for each student (case-insensitive lowercase).
-    student_variants: Dict[str, List[str]] = {
-        s.chinese_name: get_pinyin_variants(s.chinese_name) for s in students
-    }
+    # Pre-compute pinyin variants from manually provided aliases only.
+    student_variants: Dict[str, List[str]] = {}
+
+    for s in students:
+        variants = set()
+
+        for alias in s.pinyin_aliases:
+            variants.update(get_pinyin_alias_variants(alias))
+
+        student_variants[s.chinese_name] = sorted(
+            variants,
+            key=len,
+            reverse=True,
+        )
 
     results: List[MatchResult] = []
 

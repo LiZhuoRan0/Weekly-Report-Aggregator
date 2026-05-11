@@ -1,121 +1,58 @@
-"""Generate pinyin variants for matching Chinese names against filenames/text.
+"""Generate pinyin variants from manually provided pinyin aliases."""
 
-Handles forms like: zhangsan, zhang_san, ZhangSan, sanzhang (given-first)
-"""
+import re
 from typing import List, Set
 
-from pypinyin import lazy_pinyin
 
+def get_pinyin_alias_variants(alias: str) -> List[str]:
+    """Return lowercase pinyin variants from a manually provided pinyin alias.
 
-def get_pinyin_variants(chinese_name: str) -> List[str]:
-    """Return a list of lowercase pinyin variants used for substring matching.
-
-    For "李卓然" (li/zhuo/ran), produces variants like:
-      lizhuoran, li_zhuoran, li-zhuoran, zhuoranli, zhuoran_li, zhuoran-li,
-      lizr, lizhr (initials-style)
-
-    For 2-character names, surname-first and given-first are generated.
-    For names with >=2 syllables in the given name, the given name is also
-    handled both as one block and with internal separators.
+    Example:
+    "li zhuoran" -> lizhuoran, li zhuoran, li_zhuoran, li-zhuoran,
+                    zhuoranli, zhuoran li, zhuoran_li, zhuoran-li
     """
-    if not chinese_name:
+    alias = alias.strip().lower()
+    if not alias:
         return []
 
-    # lazy_pinyin: "李卓然" -> ["li", "zhuo", "ran"]
-    syllables = [s.lower() for s in lazy_pinyin(chinese_name)]
-    if not syllables:
+    parts = [p for p in re.split(r"[\s_\-]+", alias) if p]
+    if not parts:
         return []
 
-    if len(syllables) == 1:
-        # Single-syllable name (rare), just return it
-        return [syllables[0]]
+    if len(parts) == 1:
+        return [parts[0]]
 
-    # # Treat first syllable as surname, the rest as given name.
-    # # (Compound surnames like "欧阳" are uncommon and would still match
-    # # via the given-name half; we don't try to detect them here.)
-    # surname = syllables[0]
-    # given_syllables = syllables[1:]
-    # given_joined = "".join(given_syllables)
-
-    # variants: Set[str] = set()
-
-    # # Surname-first orderings
-    # variants.add(surname + given_joined)              # lizhuoran
-    # variants.add(surname + "_" + given_joined)        # li_zhuoran
-    # variants.add(surname + "-" + given_joined)        # li-zhuoran
-    # if len(given_syllables) > 1:
-    #     variants.add(surname + "_" + "_".join(given_syllables))  # li_zhuo_ran
-    #     variants.add(surname + "-" + "-".join(given_syllables))
-
-    # # Given-name-first orderings (some students write name-then-surname)
-    # variants.add(given_joined + surname)              # zhuoranli
-    # variants.add(given_joined + "_" + surname)        # zhuoran_li
-    # variants.add(given_joined + "-" + surname)        # zhuoran-li
-    # if len(given_syllables) > 1:
-    #     variants.add("_".join(given_syllables) + "_" + surname)
-    #     variants.add("-".join(given_syllables) + "-" + surname)
-
-    # return sorted(variants, key=len, reverse=True)  # longer first to prefer specific matches
-    
     variants: Set[str] = set()
-
-    # Separators commonly used in filenames:
-    #   ZhuoranLi, Zhuoran Li, Zhuoran_Li, Zhuoran-Li
     separators = ["", " ", "_", "-"]
 
-    def add_joined(parts: List[str]) -> None:
-        """Add variants by joining name parts with common separators."""
-        parts = [p for p in parts if p]
-        if not parts:
+    def add_joined(items: List[str]) -> None:
+        items = [x for x in items if x]
+        if not items:
             return
         for sep in separators:
-            variants.add(sep.join(parts))
+            variants.add(sep.join(items))
 
-    def add_name_orders(surname_parts: List[str], given_parts: List[str]) -> None:
-        """Add surname-first, given-first, and given-only variants."""
-        surname_joined = "".join(surname_parts)      # li
-        given_joined = "".join(given_parts)          # zhuoran
+    surname_parts = parts[:1]
+    given_parts = parts[1:]
 
-        # Basic blocks:
-        #   li + zhuoran
-        #   zhuoran + li
-        add_joined([surname_joined, given_joined])   # lizhuoran, li zhuoran, li_zhuoran, li-zhuoran
-        add_joined([given_joined, surname_joined])   # zhuoranli, zhuoran li, zhuoran_li, zhuoran-li
+    surname_joined = "".join(surname_parts)
+    given_joined = "".join(given_parts)
 
-        # Fully split given name:
-        #   li zhuo ran
-        #   zhuo ran li
-        if len(given_parts) > 1:
-            add_joined([surname_joined] + given_parts)   # li zhuo ran, li_zhuo_ran, etc.
-            add_joined(given_parts + [surname_joined])   # zhuo ran li, zhuo_ran_li, etc.
+    # surname-first: li zhuoran / lizhuoran / li_zhuoran / li-zhuoran
+    add_joined([surname_joined, given_joined])
 
-        # Given name only:
-        #   zhuoran
-        # Useful when filename is only "Report Zhuoran_0427.pdf".
-        if len(given_joined) >= 4:
-            variants.add(given_joined)
+    # given-first: zhuoran li / zhuoranli / zhuoran_li / zhuoran-li
+    add_joined([given_joined, surname_joined])
 
-        # Given name split:
-        #   zhuo ran, zhuo_ran, zhuo-ran
-        # Do not add individual syllables like "zhuo" or "ran";
-        # they are too ambiguous.
-        if len(given_parts) > 1:
-            add_joined(given_parts)
+    # fully split given name: li zhuo ran / zhuo ran li
+    if len(given_parts) > 1:
+        add_joined([surname_joined] + given_parts)
+        add_joined(given_parts + [surname_joined])
+        add_joined(given_parts)
 
-        # Surname only is usually too ambiguous, especially "li".
-        # Also matcher.py skips variants shorter than 4 chars anyway,
-        # so we intentionally do not add surname-only variants.
-
-    # Normal case: first syllable is surname, rest is given name.
-    # 李卓然 -> surname = li, given = zhuo ran
-    if len(syllables) >= 2:
-        add_name_orders(syllables[:1], syllables[1:])
-
-    # Optional compound-surname support:
-    # 欧阳娜娜 -> also try surname = ou yang, given = na na
-    # This does not affect 李卓然, but helps names with 2-character surnames.
-    if len(syllables) >= 3:
-        add_name_orders(syllables[:2], syllables[2:])
+    # given name only: zhuoran
+    if len(given_joined) >= 4:
+        variants.add(given_joined)
 
     return sorted(variants, key=len, reverse=True)
 
