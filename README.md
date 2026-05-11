@@ -7,6 +7,7 @@
 ## 功能特性
 
 - **双数据源**：同时从本地目录（`FilePath`）和 QQ 邮箱（最近 N 天）读取周报
+- **邮件抓取重试**：单封邮件读取超时会自动重试并重连 IMAP，失败后只跳过该邮件，不影响后续邮件
 - **智能匹配**：通过文件名、PDF 内容、邮件发件人三种信号匹配学生
 - **拼音变体**：基于 `students.txt` 中手动提供的拼音，生成 `zhangsan`/`zhang_san`/`zhang-san`/`sanzhang` 等多种匹配形式，避免中文多音字导致的错误匹配
 - **冲突解决**：本地优先，同源取最新；同名学生在已交/未交中只出现一次
@@ -35,7 +36,7 @@ weekly_report_aggregator/
 │   ├── pinyin_utils.py         # 基于手动拼音生成匹配变体
 │   ├── pdf_utils.py            # PDF 读取 / 合并 / 书签 / 分卷
 │   ├── matcher.py              # PDF→学生 匹配器
-│   ├── email_fetcher.py        # IMAP 抓取邮件附件
+│   ├── email_fetcher.py        # IMAP 抓取邮件附件，支持单封邮件 fetch 重试与断线重连
 │   ├── email_sender.py         # SMTP 发送
 │   ├── scheduler.py            # TargetTime 等待
 │   └── logger.py               # 日志配置
@@ -111,6 +112,23 @@ advisor1@example.com
 advisor2@example.com
 ```
 
+#### 邮件抓取稳定性说明
+
+邮件附件通过 IMAP 从 QQ 邮箱读取。为避免一封邮件超时影响整个流程，程序对单封邮件 fetch 设置了重试机制(这些参数目前是写死在 `email_fetcher.py` 里的)：
+
+```
+_IMAP_TIMEOUT_SECONDS = 60
+_FETCH_MAX_ATTEMPTS = 3
+_FETCH_RETRY_SLEEP_SECONDS = 2
+```
+
+```
+IMAP socket timeout: 60 秒
+单封邮件 fetch 最大重试次数: 3 次
+重试间隔: 2 秒
+```
+每次 fetch 超时后，程序会关闭当前 IMAP 连接并重新连接；如果同一封邮件多次失败，则跳过该邮件并继续处理下一封。
+
 ### 3. 运行
 
 ```bash
@@ -156,8 +174,12 @@ python main.py \
  │
  ├─→ 扫描 FilePath 下所有 .pdf  →  本地候选列表
  │
- ├─→ 通过 IMAP 拉取 [TargetTime - lookback_days, TargetTime] 间的所有邮件
- │     提取所有 PDF 附件保存到临时目录  →  邮件候选列表
+ ├─→ 通过 IMAP 搜索 [TargetTime - lookback_days, TargetTime] 间的邮件 UID
+ │     对每封邮件执行 fetch：
+ │       • fetch 超时 / 连接中断时，自动关闭旧连接并重新连接
+ │       • 单封邮件最多重试若干次
+ │       • 多次失败后只跳过该邮件，不影响后续邮件
+ │     提取所有 PDF 附件保存到临时目录 → 邮件候选列表
  │
  ├─→ 匹配器：为每个候选 PDF 算出最佳学生
  │     • 文件名包含中文名     +60
@@ -198,11 +220,21 @@ python main.py \
 
 - 每个候选 PDF 匹配到了谁、得分多少、匹配原因
 - 每个学生最终选了哪份 PDF（本地 vs 邮件）
-- 未匹配的 PDF 列表（便于排查命名问题）
+- 未匹配的 PDF 列表（便于排查命名或拼音问题）
+- 如果邮件附件没有成功保存，则该附件不会出现在匹配报告中，需要查看日志中的 IMAP / fetch 记录
 
 ### 日志
 
-`logs/run_<时间戳>.log` —— 每次运行一份，含 IMAP/SMTP 操作、匹配过程、错误等。
+`logs/run_<时间戳>.log` —— 每次运行一份，含 IMAP/SMTP 操作、邮件 fetch 重试与重连记录、附件保存记录、匹配过程、错误等。
+
+如果某封邮件读取失败，日志会显示类似：
+
+```
+Failed to fetch message b'41' (attempt 1/3): The read operation timed out
+Failed to fetch message b'41' (attempt 2/3): ...
+Skipped message b'41' after 3 failed fetch attempt(s): ...
+```
+这表示只跳过该邮件，程序会继续处理后续邮件。
 
 ### 邮件
 
@@ -254,7 +286,10 @@ python main.py \
 |----------|----------|
 | 单个 PDF 损坏 / 无法读取 | 跳过该文件，记录到日志和匹配报告，不影响其他 PDF |
 | 邮箱认证失败 | 立即报错并退出（无法继续） |
-| IMAP 暂时无响应 | 记录错误并跳过邮件来源，继续用本地 PDF |
+| IMAP 搜索邮件失败 / 首次连接失败 | 记录错误，邮件来源不可用时继续使用本地 PDF |
+| 单封邮件 fetch 超时 / 连接中断 | 自动重试并重连 IMAP；多次失败后只跳过该邮件，不影响后续邮件 |
+| 单封邮件解析失败 | 跳过该邮件，记录到日志，不影响后续邮件 |
+| 邮件附件保存失败 | 跳过该附件，记录到日志，不影响其他附件 |
 | FilePath 不存在或非目录 | 记录错误，仅用邮件来源（如果有的话） |
 | SMTP 发送失败 | 记录错误，返回非零退出码 |
 | 没有任何学生交了周报 | 退出码 2，不发邮件 |
@@ -278,6 +313,25 @@ A：每次执行是独立的（无状态）。修改 `config.json` 的 `TargetTi
 
 **Q：如何调试匹配失败？**
 A：先用 `--dry-run --no-wait` 跑一遍，查看 `output/match_report_*.txt`，里面有每个 PDF 的得分明细。
+
+**Q：为什么我明明在 QQ 邮箱里收到了学生邮件，结果仍显示未交？**
+
+A：请先查看 `logs/run_<时间戳>.log` 和 `output/match_report_*.txt`。
+
+如果日志中 `Total PDFs saved from email` 为 0，说明程序没有成功从邮件中保存 PDF 附件。当前版本会对单封邮件 fetch 超时自动重试并重连；如果某封邮件多次失败，只会跳过该邮件，不会影响后续邮件。
+
+可以重点检查日志中是否有以下信息：
+
+```
+Saved email attachment: ...
+Failed to fetch message ... (attempt 1/3)
+Skipped message ... after 3 failed fetch attempt(s)
+```
+如果 `Saved email attachment` 出现了，但匹配报告仍显示该学生未交，再检查 `match_report_*.txt` 中该 PDF 的匹配得分和匹配原因。
+
+**Q：为什么邮件抓取使用 UID 而不是普通 message id？**
+
+A：因为普通 `message sequence number` 在 IMAP 重连后可能变化，而 UID 更稳定。程序在 fetch 超时后会关闭旧连接并重新连接，因此使用 UID 可以更安全地继续处理后续邮件。
 
 ---
 
