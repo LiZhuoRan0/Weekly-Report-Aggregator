@@ -1,5 +1,3 @@
-#博
-xxx@yyy.edu.cn# 24级博王伟
-
-#硕
-xxx@yyy.edu.cn# 24级硕李伟
+# 导师
+王老师，wang laoshi，wang_teacher@yyy.edu.cn
+李老师，li laoshi，li_teacher@yyy.edu.cn

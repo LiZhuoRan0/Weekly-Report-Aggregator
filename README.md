@@ -105,11 +105,11 @@ pip install -r requirements.txt
 
 #### `TargetEmail.txt` 格式
 
-每行一个收件人邮箱（也可用上面的分隔符放多个邮箱在一行）：
+与 `students.txt` 使用完全相同的三列格式：中文姓名、拼音、邮箱。中文姓名会作为邮件收件人的显示名称：
 
 ```
-advisor1@example.com
-advisor2@example.com
+王磊，wang lei，advisor1@example.com
+李明，li ming，advisor2@example.com
 ```
 
 #### 邮件抓取稳定性说明

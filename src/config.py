@@ -3,7 +3,7 @@ import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List
+from typing import List, Tuple
 
 
 @dataclass
@@ -74,6 +74,7 @@ def _strip_comment(line: str) -> str:
     """Remove inline annotations/comments from one line."""
     return _INLINE_COMMENT_RE.sub("", line).strip()
 
+
 def load_students(path: str) -> List[Student]:
     """Parse students.txt.
 
@@ -134,49 +135,15 @@ def load_students(path: str) -> List[Student]:
     return students
 
 
-def load_target_emails(path: str) -> List[str]:
-    """Read recipient emails from TargetEmail.txt.
-
-    Supported examples:
-
-        advisor1@example.com
-        advisor2@example.com  # Prof. Wang
-        advisor3@example.com  // TA
-        advisor4@example.com 备注：课程老师
-        advisor5@example.com, advisor6@example.com  # multiple recipients
-
-    Anything after #, //, 备注:, 注释:, or comment: is treated as annotation.
-    """
-    p = Path(path)
-    if not p.exists():
-        raise FileNotFoundError(f"Target email file not found: {path}")
-
-    out: List[str] = []
+def load_target_emails(path: str) -> List[Tuple[str, str]]:
+    """Read recipients using the same Chinese-name, pinyin, email format as students.txt."""
+    recipients = load_students(path)
+    out: List[Tuple[str, str]] = []
     seen = set()
-
-    with p.open("r", encoding="utf-8") as f:
-        for raw_line in f:
-            line = raw_line.strip()
-
-            if not line:
-                continue
-
-            # Full-line comments
-            if line.startswith("#") or line.startswith("//"):
-                continue
-
-            # Remove inline annotations
-            line = _strip_comment(line)
-
-            if not line:
-                continue
-
-            # Extract valid emails only.
-            # This is safer than checking if "@" is in a token.
-            for match in _EMAIL_RE.finditer(line):
-                email = match.group(0).lower()
-                if email not in seen:
-                    out.append(email)
-                    seen.add(email)
+    for recipient in recipients:
+        for email in recipient.emails:
+            if email not in seen:
+                out.append((recipient.chinese_name, email))
+                seen.add(email)
 
     return out

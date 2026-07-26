@@ -5,7 +5,7 @@ import ssl
 from email.message import EmailMessage
 from email.utils import formataddr
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List, Tuple
 
 logger = logging.getLogger("wra")
 
@@ -16,7 +16,7 @@ def send_emails_with_attachments(
     smtp_user: str,
     smtp_password: str,
     sender_display_name: str,
-    recipients: List[str],
+    recipients: List[Tuple[str, str]],
     subject_base: str,
     body_text: str,
     attachments: List[str],
@@ -50,7 +50,7 @@ def send_emails_with_attachments(
 
         msg = EmailMessage()
         msg["From"] = formataddr((sender_display_name, smtp_user))
-        msg["To"] = ", ".join(recipients)
+        msg["To"] = ", ".join(formataddr((name, email)) for name, email in recipients)
         msg["Subject"] = subject
         msg.set_content(body_text + extra_body)
 
