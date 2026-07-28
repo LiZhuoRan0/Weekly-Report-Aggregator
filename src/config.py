@@ -64,6 +64,10 @@ def load_config(path: str = "config.json") -> Config:
 # This preserves manually provided pinyin like "li wei".
 _FIELD_DELIM_RE = re.compile(r"[,，;；]+")
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
+_ANGLE_RECIPIENT_RE = re.compile(
+    r"(?P<name>[^<>\"]+?)\s*<\s*(?P<email>[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,})\s*>",
+    re.IGNORECASE,
+)
 
 _INLINE_COMMENT_RE = re.compile(
     r"(#|//|备注[:：]|注释[:：]|comment[:：]).*$",
@@ -136,14 +140,53 @@ def load_students(path: str) -> List[Student]:
 
 
 def load_target_emails(path: str) -> List[Tuple[str, str]]:
-    """Read recipients using the same Chinese-name, pinyin, email format as students.txt."""
-    recipients = load_students(path)
-    out: List[Tuple[str, str]] = []
-    seen = set()
-    for recipient in recipients:
-        for email in recipient.emails:
-            if email not in seen:
-                out.append((recipient.chinese_name, email))
-                seen.add(email)
+    """Read recipients using one of two formats:
 
-    return out
+    1) Legacy: Chinese name, pinyin, email (students-like format)
+    2) Display name <email> (for pasted client address lists)
+    """
+    p = Path(path)
+    if not p.exists():
+        raise FileNotFoundError(f"Target email file not found: {path}")
+
+    recipients: List[Tuple[str, str]] = []
+    seen = set()
+    with p.open("r", encoding="utf-8") as f:
+        for raw_line in f:
+            line = raw_line.strip()
+            if not line or line.startswith("#") or line.startswith("//"):
+                continue
+
+            line = _strip_comment(line)
+            if not line:
+                continue
+
+            angle_pairs = [
+                (
+                    m.group("name").strip().strip('"').strip("'"),
+                    m.group("email").lower(),
+                )
+                for m in _ANGLE_RECIPIENT_RE.finditer(line)
+            ]
+
+            if angle_pairs:
+                parsed_pairs = angle_pairs
+            else:
+                fields = [t.strip() for t in _FIELD_DELIM_RE.split(line) if t.strip()]
+                if not fields:
+                    continue
+
+                name = fields[0]
+                emails = [m.group(0).lower() for m in _EMAIL_RE.finditer(line)]
+                if not emails:
+                    raise ValueError(
+                        f"Missing email for recipient line in {path}: '{line}'"
+                    )
+                parsed_pairs = [(name, email) for email in emails]
+
+            for name, email in parsed_pairs:
+                if email not in seen:
+                    recipients.append((name, email))
+                    seen.add(email)
+
+    return recipients
