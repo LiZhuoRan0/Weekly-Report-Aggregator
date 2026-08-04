@@ -103,7 +103,7 @@ def main() -> int:
     logger.info(f"Loaded {len(students)} students from {args.students}")
 
     try:
-        recipients = load_target_emails(args.target_email)
+        recipients = load_target_emails(args.target_email, students)
     except FileNotFoundError as e:
         logger.error(str(e)); return 1
     if not recipients:

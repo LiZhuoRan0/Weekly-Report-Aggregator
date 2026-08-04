@@ -3,7 +3,7 @@ import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 
 @dataclass
@@ -139,12 +139,21 @@ def load_students(path: str) -> List[Student]:
     return students
 
 
-def load_target_emails(path: str) -> List[Tuple[str, str]]:
+def load_target_emails(
+    path: str,
+    students: Optional[List[Student]] = None,
+) -> List[Tuple[str, str]]:
     """Read recipients using one of two formats:
 
     1) Legacy: Chinese name, pinyin, email (students-like format)
     2) Display name <email> (for pasted client address lists)
     """
+    email_to_real_name = {
+        email.lower(): student.chinese_name
+        for student in (students or [])
+        for email in student.emails
+    }
+
     p = Path(path)
     if not p.exists():
         raise FileNotFoundError(f"Target email file not found: {path}")
@@ -184,9 +193,13 @@ def load_target_emails(path: str) -> List[Tuple[str, str]]:
                     )
                 parsed_pairs = [(name, email) for email in emails]
 
-            for name, email in parsed_pairs:
+            for original_name, email in parsed_pairs:
+                email = email.lower()
+                # Prefer the student's real name when this recipient email is known.
+                # Preserve the configured display name for addresses outside students.txt.
+                display_name = email_to_real_name.get(email, original_name)
                 if email not in seen:
-                    recipients.append((name, email))
+                    recipients.append((display_name, email))
                     seen.add(email)
 
     return recipients
