@@ -10,6 +10,11 @@ from typing import List, Tuple
 logger = logging.getLogger("wra")
 
 
+def format_recipient_header(recipients: List[Tuple[str, str]]) -> str:
+    """Build the RFC-compliant To header with UTF-8 display names."""
+    return ", ".join(formataddr((name, email)) for name, email in recipients)
+
+
 def send_emails_with_attachments(
     smtp_host: str,
     smtp_port: int,
@@ -50,7 +55,8 @@ def send_emails_with_attachments(
 
         msg = EmailMessage()
         msg["From"] = formataddr((sender_display_name, smtp_user))
-        msg["To"] = ", ".join(formataddr((name, email)) for name, email in recipients)
+        to_header = format_recipient_header(recipients)
+        msg["To"] = to_header
         msg["Subject"] = subject
         msg.set_content(body_text + extra_body)
 
@@ -71,7 +77,8 @@ def send_emails_with_attachments(
 
         size_mb = len(data) / 1024 / 1024
         logger.info(f"Prepared email {i}/{n}: subject='{subject}', "
-                    f"to={recipients}, attachment='{att_name}' ({size_mb:.2f} MB)")
+                    f"to={recipients}, to_header={to_header!r}, "
+                    f"attachment='{att_name}' ({size_mb:.2f} MB)")
 
         if dry_run:
             logger.info(f"[DRY RUN] would send email {i}/{n} (skipped)")

@@ -106,6 +106,9 @@ def main() -> int:
         recipients = load_target_emails(args.target_email, students)
     except FileNotFoundError as e:
         logger.error(str(e)); return 1
+    except ValueError as e:
+        logger.error(f"Invalid recipient list: {e}")
+        return 1
     if not recipients:
         logger.error("No recipients found in TargetEmail.txt"); return 1
     logger.info(f"Loaded {len(recipients)} recipient(s) from {args.target_email}")

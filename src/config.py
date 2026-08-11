@@ -147,13 +147,14 @@ def load_target_emails(
 
     1) Legacy: Chinese name, pinyin, email (students-like format)
     2) Display name <email> (for pasted client address lists)
-    """
-    email_to_real_name = {
-        email.lower(): student.chinese_name
-        for student in (students or [])
-        for email in student.emails
-    }
 
+    The display name in this file is authoritative. ``students`` is retained
+    only for backwards compatibility; names are not inferred from it because
+    one person may use an address that is not present in students.txt.
+
+    Empty names, numeric names, and email local-parts are rejected before
+    sending so bad headers cannot be sent silently.
+    """
     p = Path(path)
     if not p.exists():
         raise FileNotFoundError(f"Target email file not found: {path}")
@@ -161,7 +162,7 @@ def load_target_emails(
     recipients: List[Tuple[str, str]] = []
     seen = set()
     with p.open("r", encoding="utf-8") as f:
-        for raw_line in f:
+        for line_number, raw_line in enumerate(f, start=1):
             line = raw_line.strip()
             if not line or line.startswith("#") or line.startswith("//"):
                 continue
@@ -194,10 +195,20 @@ def load_target_emails(
                 parsed_pairs = [(name, email) for email in emails]
 
             for original_name, email in parsed_pairs:
+                display_name = original_name.strip().strip('"').strip("'").strip()
                 email = email.lower()
-                # Prefer the student's real name when this recipient email is known.
-                # Preserve the configured display name for addresses outside students.txt.
-                display_name = email_to_real_name.get(email, original_name)
+                if not display_name:
+                    raise ValueError(
+                        f"Missing display name for recipient on line {line_number} "
+                        f"in {path}: '{line}'"
+                    )
+
+                local_part = email.split("@", 1)[0]
+                if display_name.casefold() == local_part.casefold() or display_name.isdigit():
+                    raise ValueError(
+                        f"Suspicious display name '{display_name}' for {email} "
+                        f"on line {line_number} in {path}. Use the real name."
+                    )
                 if email not in seen:
                     recipients.append((display_name, email))
                     seen.add(email)
