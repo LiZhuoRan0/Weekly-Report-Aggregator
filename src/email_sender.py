@@ -2,12 +2,37 @@
 import logging
 import smtplib
 import ssl
+import time
 from email.message import EmailMessage
-from email.utils import formataddr
+from email.utils import formataddr, make_msgid
 from pathlib import Path
 from typing import List, Tuple
 
 logger = logging.getLogger("wra")
+
+_DEFAULT_SMTP_MAX_ATTEMPTS = 3
+_DEFAULT_SMTP_RETRY_DELAYS = (5, 15)
+
+
+def _is_transient_smtp_error(error: BaseException) -> bool:
+    """Return True only for SMTP/network failures that are worth retrying."""
+    if isinstance(error, smtplib.SMTPAuthenticationError):
+        return False
+    if isinstance(error, smtplib.SMTPRecipientsRefused):
+        return False
+    if isinstance(error, smtplib.SMTPResponseException):
+        # SMTP 4xx responses are temporary; 5xx responses are permanent.
+        return 400 <= error.smtp_code < 500
+    return isinstance(
+        error,
+        (
+            ssl.SSLError,
+            OSError,
+            smtplib.SMTPServerDisconnected,
+            smtplib.SMTPConnectError,
+            smtplib.SMTPHeloError,
+        ),
+    )
 
 
 def format_recipient_header(recipients: List[Tuple[str, str]]) -> str:
@@ -26,12 +51,16 @@ def send_emails_with_attachments(
     body_text: str,
     attachments: List[str],
     dry_run: bool = False,
+    max_attempts: int = _DEFAULT_SMTP_MAX_ATTEMPTS,
+    retry_delays: Tuple[int, ...] = _DEFAULT_SMTP_RETRY_DELAYS,
 ) -> bool:
     """Send the merged report. If multiple attachments, send them as separate emails.
 
     - subject_base: base subject; if multiple attachments, ' (i/n)' is appended
     - body_text: included verbatim in every email; appended with part info if split
     - attachments: list of file paths. Each is sent in its OWN email (one per attachment).
+    - Transient SMTP/TLS failures are retried with a fresh connection. The same
+      Message-ID is reused across attempts to help recipients' servers deduplicate.
 
     Returns True iff every email was sent (or, in dry_run, would have been sent) successfully.
     """
@@ -44,6 +73,7 @@ def send_emails_with_attachments(
 
     n = len(attachments)
     all_ok = True
+    max_attempts = max(1, int(max_attempts))
 
     for i, att_path in enumerate(attachments, start=1):
         if n > 1:
@@ -58,6 +88,8 @@ def send_emails_with_attachments(
         to_header = format_recipient_header(recipients)
         msg["To"] = to_header
         msg["Subject"] = subject
+        message_domain = smtp_user.rsplit("@", 1)[-1] if "@" in smtp_user else None
+        msg["Message-ID"] = make_msgid(domain=message_domain)
         msg.set_content(body_text + extra_body)
 
         # Attach the PDF
@@ -84,14 +116,50 @@ def send_emails_with_attachments(
             logger.info(f"[DRY RUN] would send email {i}/{n} (skipped)")
             continue
 
-        try:
-            context = ssl.create_default_context()
-            with smtplib.SMTP_SSL(smtp_host, smtp_port, context=context, timeout=60) as server:
-                server.login(smtp_user, smtp_password)
-                server.send_message(msg)
-            logger.info(f"Sent email {i}/{n} successfully.")
-        except (smtplib.SMTPException, OSError) as e:
-            logger.error(f"Failed to send email {i}/{n}: {e}")
+        sent = False
+        for attempt in range(1, max_attempts + 1):
+            try:
+                context = ssl.create_default_context()
+                with smtplib.SMTP_SSL(
+                    smtp_host,
+                    smtp_port,
+                    context=context,
+                    timeout=60,
+                ) as server:
+                    server.login(smtp_user, smtp_password)
+                    refused = server.send_message(msg)
+
+                if refused:
+                    logger.error(
+                        f"Failed to send email {i}/{n}: recipients refused: {refused}"
+                    )
+                    all_ok = False
+                    break
+
+                logger.info(f"Sent email {i}/{n} successfully.")
+                sent = True
+                break
+            except (smtplib.SMTPException, OSError) as e:
+                transient = _is_transient_smtp_error(e)
+                if not transient or attempt >= max_attempts:
+                    logger.error(
+                        f"Failed to send email {i}/{n} "
+                        f"(attempt {attempt}/{max_attempts}): {e}"
+                    )
+                    all_ok = False
+                    break
+
+                delay_index = min(attempt - 1, len(retry_delays) - 1)
+                delay = retry_delays[delay_index] if retry_delays else 0
+                logger.warning(
+                    f"Temporary SMTP failure for email {i}/{n} "
+                    f"(attempt {attempt}/{max_attempts}): {e}. "
+                    f"Reconnecting and retrying in {delay}s."
+                )
+                if delay > 0:
+                    time.sleep(delay)
+
+        if not sent:
             all_ok = False
 
     return all_ok

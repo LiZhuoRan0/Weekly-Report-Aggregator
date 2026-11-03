@@ -29,8 +29,38 @@ from .matcher import PdfCandidate
 logger = logging.getLogger("wra")
 
 _IMAP_TIMEOUT_SECONDS = 60
+_CONNECT_MAX_ATTEMPTS = 3
+_CONNECT_RETRY_DELAYS = (5, 15)
 _FETCH_MAX_ATTEMPTS = 3
 _FETCH_RETRY_SLEEP_SECONDS = 2
+
+
+class EmailFetchError(RuntimeError):
+    """Raised when the email source cannot be fetched reliably."""
+
+
+def _is_transient_imap_error(error: BaseException) -> bool:
+    """Return True for connection/network failures, but not auth failures."""
+    if isinstance(error, imaplib.IMAP4.error):
+        message = str(error).lower()
+        permanent_markers = (
+            "authenticationfailed",
+            "authentication failed",
+            "login failed",
+            "login fail",
+            "invalid credentials",
+            "authorization code",
+        )
+        return not any(marker in message for marker in permanent_markers)
+    return isinstance(
+        error,
+        (
+            socket.timeout,
+            TimeoutError,
+            OSError,
+            imaplib.IMAP4.abort,
+        ),
+    )
 
 
 def _close_imap(M: Optional[imaplib.IMAP4_SSL]) -> None:
@@ -67,6 +97,42 @@ def _connect_imap(
         raise imaplib.IMAP4.error("Failed to select INBOX")
 
     return M
+
+
+def _connect_imap_with_retries(
+    host: str,
+    port: int,
+    user: str,
+    password: str,
+    max_attempts: int = _CONNECT_MAX_ATTEMPTS,
+    retry_delays: tuple[int, ...] = _CONNECT_RETRY_DELAYS,
+) -> imaplib.IMAP4_SSL:
+    """Create an IMAP connection, retrying transient network failures."""
+    max_attempts = max(1, int(max_attempts))
+    last_error: Optional[BaseException] = None
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            return _connect_imap(host, port, user, password)
+        except (socket.timeout, TimeoutError, OSError, imaplib.IMAP4.error) as e:
+            last_error = e
+            if not _is_transient_imap_error(e) or attempt >= max_attempts:
+                break
+
+            delay_index = min(attempt - 1, len(retry_delays) - 1)
+            delay = retry_delays[delay_index] if retry_delays else 0
+            logger.warning(
+                f"Temporary IMAP connection failure "
+                f"(attempt {attempt}/{max_attempts}): {e}. "
+                f"Retrying in {delay}s."
+            )
+            if delay > 0:
+                time.sleep(delay)
+
+    raise EmailFetchError(
+        f"Unable to connect to IMAP {host}:{port} after "
+        f"{max_attempts} attempt(s): {last_error}"
+    ) from last_error
 
 
 def _fetch_raw_message_with_retries(
@@ -205,13 +271,15 @@ def fetch_email_pdf_attachments(
         # A timed-out connection will be discarded and rebuilt per message fetch.
         socket.setdefaulttimeout(_IMAP_TIMEOUT_SECONDS)
 
-        M = _connect_imap(host, port, user, password)
+        M = _connect_imap_with_retries(host, port, user, password)
 
         # Build IMAP SINCE date (one day earlier to be safe)
         search_since = (since_dt - timedelta(days=1)).strftime("%d-%b-%Y")
         # IMAP SEARCH: SINCE returns messages with internal date >= the given date
         typ, data = M.uid("SEARCH", None, "SINCE", search_since)
-        if typ != "OK" or not data or not data[0]:
+        if typ != "OK":
+            raise imaplib.IMAP4.error(f"IMAP SEARCH failed with status {typ!r}")
+        if not data or not data[0]:
             logger.info(f"No messages found since {search_since}")
             return []
 
@@ -329,10 +397,14 @@ def fetch_email_pdf_attachments(
                     sender_email=sender_email_addr or None,
                     original_name=fname_decoded or safe_name,
                 ))
+    except EmailFetchError:
+        raise
     except imaplib.IMAP4.error as e:
         logger.error(f"IMAP error: {e}")
+        raise EmailFetchError(f"IMAP fetch failed: {e}") from e
     except Exception as e:
         logger.error(f"Unexpected error during IMAP fetch: {e}")
+        raise EmailFetchError(f"Unexpected IMAP fetch failure: {e}") from e
     finally:
         _close_imap(M)
 

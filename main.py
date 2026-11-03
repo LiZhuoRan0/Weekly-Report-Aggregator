@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import List
 
 from src.config import load_config, load_students, load_target_emails
-from src.email_fetcher import fetch_email_pdf_attachments
+from src.email_fetcher import EmailFetchError, fetch_email_pdf_attachments
 from src.email_sender import build_email_subject_and_body, send_emails_with_attachments
 from src.logger import setup_logger
 from src.matcher import (
@@ -146,16 +146,27 @@ def main() -> int:
 
     tmp_dir = tempfile.mkdtemp(prefix="wra_email_")
     logger.info(f"Email attachments will be saved to: {tmp_dir}")
-    email_candidates = fetch_email_pdf_attachments(
-        host=cfg.imap_host,
-        port=cfg.imap_port,
-        user=cfg.imap_user,
-        password=cfg.imap_password,
-        save_dir=tmp_dir,
-        since_dt=since_dt,
-        until_dt=target_dt,
-        student_emails=student_emails_set,
-    )
+    try:
+        email_candidates = fetch_email_pdf_attachments(
+            host=cfg.imap_host,
+            port=cfg.imap_port,
+            user=cfg.imap_user,
+            password=cfg.imap_password,
+            save_dir=tmp_dir,
+            since_dt=since_dt,
+            until_dt=target_dt,
+            student_emails=student_emails_set,
+        )
+    except EmailFetchError as e:
+        logger.error(
+            f"Email attachment fetch failed: {e}. "
+            "Aborting before generating an incomplete report."
+        )
+        if args.keep_temp:
+            logger.info(f"Keeping temp dir: {tmp_dir}")
+        else:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+        return 5
 
     all_candidates = local_candidates + email_candidates
     logger.info(
